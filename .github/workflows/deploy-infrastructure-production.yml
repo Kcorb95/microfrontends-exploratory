@@ -1,0 +1,280 @@
+name: Deploy Infrastructure (Production)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: 'Infrastructure stack to deploy'
+        required: true
+        type: choice
+        options:
+          - all
+          - shared
+          - app-runner
+          - www-distribution
+          - docs-distribution
+          - voyager
+          - turbo-cache
+      action:
+        description: 'Terraform action'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+
+concurrency:
+  group: deploy-infrastructure-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: '1.6.0'
+  ENVIRONMENT: production
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-shared:
+    name: Shared Infrastructure
+    runs-on: ubuntu-latest
+    if: inputs.stack == 'all' || inputs.stack == 'shared'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/shared
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/shared
+        run: terraform plan -var="environment=${{ env.ENVIRONMENT }}" -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/shared
+        run: terraform apply -auto-approve tfplan
+
+  deploy-app-runner:
+    name: App Runner Services
+    runs-on: ubuntu-latest
+    needs: deploy-shared
+    if: always() && (inputs.stack == 'all' || inputs.stack == 'app-runner') && (needs.deploy-shared.result == 'success' || needs.deploy-shared.result == 'skipped')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/app-runner
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/app-runner
+        run: terraform plan -var="environment=${{ env.ENVIRONMENT }}" -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/app-runner
+        run: terraform apply -auto-approve tfplan
+
+  deploy-www-distribution:
+    name: WWW Distribution
+    runs-on: ubuntu-latest
+    needs: deploy-app-runner
+    if: always() && (inputs.stack == 'all' || inputs.stack == 'www-distribution') && (needs.deploy-app-runner.result == 'success' || needs.deploy-app-runner.result == 'skipped')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/www-distribution
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/www-distribution
+        run: |
+          VARS="-var=environment=${{ env.ENVIRONMENT }}"
+          if [ -n "${{ vars.WWW_DOMAIN }}" ]; then
+            VARS="$VARS -var=www_domain=${{ vars.WWW_DOMAIN }}"
+          fi
+          terraform plan $VARS -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/www-distribution
+        run: terraform apply -auto-approve tfplan
+
+  deploy-docs-distribution:
+    name: Docs Distribution
+    runs-on: ubuntu-latest
+    needs: deploy-app-runner
+    if: always() && (inputs.stack == 'all' || inputs.stack == 'docs-distribution') && (needs.deploy-app-runner.result == 'success' || needs.deploy-app-runner.result == 'skipped')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/docs-distribution
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/docs-distribution
+        run: |
+          VARS="-var=environment=${{ env.ENVIRONMENT }}"
+          if [ -n "${{ vars.DOCS_DOMAIN }}" ]; then
+            VARS="$VARS -var=docs_domain=${{ vars.DOCS_DOMAIN }}"
+          fi
+          terraform plan $VARS -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/docs-distribution
+        run: terraform apply -auto-approve tfplan
+
+  deploy-voyager:
+    name: Voyager
+    runs-on: ubuntu-latest
+    needs: deploy-shared
+    if: always() && (inputs.stack == 'all' || inputs.stack == 'voyager') && (needs.deploy-shared.result == 'success' || needs.deploy-shared.result == 'skipped')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/voyager
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/voyager
+        run: |
+          VARS="-var=environment=${{ env.ENVIRONMENT }}"
+          if [ -n "${{ vars.VOYAGER_DOMAIN }}" ]; then
+            VARS="$VARS -var=voyager_domain=${{ vars.VOYAGER_DOMAIN }}"
+          fi
+          terraform plan $VARS -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/voyager
+        run: terraform apply -auto-approve tfplan
+
+  deploy-turbo-cache:
+    name: Turbo Cache
+    runs-on: ubuntu-latest
+    if: inputs.stack == 'all' || inputs.stack == 'turbo-cache'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/stacks/turbo-cache
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/stacks/turbo-cache
+        run: terraform plan -var="turbo_token=${{ secrets.TURBO_TOKEN }}" -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: infrastructure/stacks/turbo-cache
+        run: terraform apply -auto-approve tfplan
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-shared, deploy-app-runner, deploy-www-distribution, deploy-docs-distribution, deploy-voyager, deploy-turbo-cache]
+    if: always()
+    steps:
+      - name: Create summary
+        run: |
+          echo "## Production Infrastructure Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | ${{ inputs.stack }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | ${{ inputs.action }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| shared | ${{ needs.deploy-shared.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| app-runner | ${{ needs.deploy-app-runner.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| www-distribution | ${{ needs.deploy-www-distribution.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs-distribution | ${{ needs.deploy-docs-distribution.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| voyager | ${{ needs.deploy-voyager.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| turbo-cache | ${{ needs.deploy-turbo-cache.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY

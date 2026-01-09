@@ -1,0 +1,11 @@
+{
+  "name": "viewer-response-lambda",
+  "version": "1.0.0",
+  "description": "Lambda@Edge viewer response handler for www distribution",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests yet\""
+  },
+  "author": "",
+  "license": "ISC"
+}

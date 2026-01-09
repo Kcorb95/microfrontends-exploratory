@@ -1,0 +1,11 @@
+# Turborepo Remote Cache Configuration
+#
+# Copy this file to terraform.tfvars and fill in the values.
+# NEVER commit terraform.tfvars with real secrets to git!
+
+aws_region           = "us-east-1"
+environment          = "production"
+cache_retention_days = 30
+
+# Generate a secure token: openssl rand -hex 32
+turbo_token = "your-secure-token-here"

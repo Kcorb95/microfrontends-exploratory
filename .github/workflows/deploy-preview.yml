@@ -1,0 +1,456 @@
+name: Deploy Preview
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - production
+      - beta
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: 'Deploy all apps (not just affected)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: preview-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: preview
+  PROJECT_PREFIX: micro-frontends-poc
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_API: ${{ vars.TURBO_API }}
+  TURBO_TEAM: micro-frontends-poc
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      branch_id: ${{ steps.branch.outputs.short_id }}
+      branch_name: ${{ steps.branch.outputs.full_name }}
+      branch_original: ${{ steps.branch.outputs.original }}
+      apps: ${{ steps.apps.outputs.list }}
+      matrix: ${{ steps.apps.outputs.matrix }}
+      has_changes: ${{ steps.apps.outputs.has_changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate branch identifiers
+        id: branch
+        run: |
+          # Get branch name
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BRANCH_NAME="${{ github.head_ref }}"
+          else
+            BRANCH_NAME="${{ github.ref_name }}"
+          fi
+
+          # Full branch name (sanitized but not truncated) - for display purposes
+          FULL_BRANCH=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+
+          # Short ID - deterministic hash of branch name for AWS resource naming
+          # Using first 12 chars of SHA256 hash - short enough for AWS limits, unique enough to avoid collisions
+          SHORT_ID=$(echo -n "$BRANCH_NAME" | sha256sum | cut -c1-12)
+
+          echo "Original branch: $BRANCH_NAME"
+          echo "Full branch (sanitized): $FULL_BRANCH"
+          echo "Short ID (for AWS): $SHORT_ID"
+
+          # Output both - use short_id for AWS resources, full_name for display
+          echo "short_id=$SHORT_ID" >> $GITHUB_OUTPUT
+          echo "full_name=$FULL_BRANCH" >> $GITHUB_OUTPUT
+          echo "original=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Detect affected apps
+        id: apps
+        run: |
+          ALL_APPS='["core","lp","platform","templates","release-notes","kitchen-sink","docs"]'
+
+          if [ "${{ github.event.inputs.deploy_all }}" = "true" ]; then
+            APPS="$ALL_APPS"
+          else
+            # Detect affected apps using Turborepo
+            AFFECTED=$(pnpm turbo run build --affected --dry-run=json 2>/dev/null || echo '{"packages":[]}')
+            APPS=$(echo "$AFFECTED" | jq -r '[.packages[] | select(startswith("@apps/")) | ltrimstr("@apps/")] | unique')
+          fi
+
+          echo "Affected apps: $APPS"
+          echo "list=$APPS" >> $GITHUB_OUTPUT
+
+          if [ "$APPS" = "[]" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"app\":[]}" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            MATRIX=$(echo "$APPS" | jq -c '{app: .}')
+            echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    name: Build - ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_PREFIX }}/${{ matrix.app }}:preview-${{ needs.prepare.outputs.branch_id }}-${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_PREFIX }}/${{ matrix.app }}:preview-${{ needs.prepare.outputs.branch_id }}-latest
+          cache-from: type=gha,scope=${{ matrix.app }}-preview-${{ needs.prepare.outputs.branch_id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}-preview-${{ needs.prepare.outputs.branch_id }}
+          build-args: |
+            NODE_ENV=production
+            NEXT_PUBLIC_DEPLOYMENT_ENV=preview
+
+      - name: Output image tag
+        run: |
+          echo "image_tag=preview-${{ needs.prepare.outputs.branch_id }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy - ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    needs: [prepare, build-and-push]
+    if: needs.prepare.outputs.has_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    outputs:
+      urls: ${{ steps.collect-urls.outputs.urls }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Deploy to App Runner
+        id: deploy
+        run: |
+          BRANCH_ID="${{ needs.prepare.outputs.branch_id }}"
+          BRANCH_NAME="${{ needs.prepare.outputs.branch_name }}"
+          SERVICE_NAME="${PROJECT_PREFIX}-${{ matrix.app }}-preview-${BRANCH_ID}"
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          IMAGE_URI="${ECR_REGISTRY}/${PROJECT_PREFIX}/${{ matrix.app }}:preview-${BRANCH_ID}-${{ github.sha }}"
+
+          echo "Service Name: $SERVICE_NAME"
+          echo "Image URI: $IMAGE_URI"
+
+          # Check if service exists
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceArn" \
+            --output text || echo "")
+
+          # Wait for any in-progress deployment to complete
+          if [ -n "$SERVICE_ARN" ] && [ "$SERVICE_ARN" != "None" ]; then
+            echo "Checking for in-progress deployments..."
+            chmod +x .github/scripts/wait-for-deployment.sh
+            .github/scripts/wait-for-deployment.sh "$SERVICE_ARN" 10 60
+          fi
+
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "Creating new preview service..."
+
+            CREATE_RESPONSE=$(aws apprunner create-service \
+              --service-name "${SERVICE_NAME}" \
+              --region ${{ env.AWS_REGION }} \
+              --source-configuration '{
+                "ImageRepository": {
+                  "ImageIdentifier": "'"${IMAGE_URI}"'",
+                  "ImageConfiguration": {
+                    "Port": "8080",
+                    "RuntimeEnvironmentVariables": {
+                      "NODE_ENV": "production",
+                      "NEXT_PUBLIC_DEPLOYMENT_ENV": "preview",
+                      "BRANCH_NAME": "'"${BRANCH_NAME}"'",
+                      "BRANCH_ID": "'"${BRANCH_ID}"'",
+                      "PORT": "8080",
+                      "HOSTNAME": "0.0.0.0"
+                    }
+                  },
+                  "ImageRepositoryType": "ECR"
+                },
+                "AuthenticationConfiguration": {
+                  "AccessRoleArn": "${{ secrets.APP_RUNNER_ECR_ACCESS_ROLE_ARN }}"
+                },
+                "AutoDeploymentsEnabled": false
+              }' \
+              --instance-configuration '{
+                "Cpu": "0.25 vCPU",
+                "Memory": "0.5 GB",
+                "InstanceRoleArn": "${{ secrets.APP_RUNNER_INSTANCE_ROLE_ARN }}"
+              }' \
+              --health-check-configuration '{
+                "Protocol": "HTTP",
+                "Path": "/api/health",
+                "Interval": 20,
+                "Timeout": 10,
+                "HealthyThreshold": 2,
+                "UnhealthyThreshold": 5
+              }' \
+              --tags '[
+                {"Key": "Environment", "Value": "preview"},
+                {"Key": "BranchId", "Value": "'"${BRANCH_ID}"'"},
+                {"Key": "BranchName", "Value": "'"${BRANCH_NAME:0:256}"'"},
+                {"Key": "App", "Value": "${{ matrix.app }}"},
+                {"Key": "Ephemeral", "Value": "true"},
+                {"Key": "ManagedBy", "Value": "github-actions"},
+                {"Key": "CommitSHA", "Value": "${{ github.sha }}"}
+              ]')
+
+            SERVICE_ARN=$(echo "$CREATE_RESPONSE" | jq -r '.Service.ServiceArn')
+            echo "Created service: $SERVICE_ARN"
+          else
+            echo "Updating existing service: $SERVICE_ARN"
+
+            aws apprunner update-service \
+              --service-arn "${SERVICE_ARN}" \
+              --source-configuration '{
+                "ImageRepository": {
+                  "ImageIdentifier": "'"${IMAGE_URI}"'",
+                  "ImageConfiguration": {
+                    "Port": "8080",
+                    "RuntimeEnvironmentVariables": {
+                      "NODE_ENV": "production",
+                      "NEXT_PUBLIC_DEPLOYMENT_ENV": "preview",
+                      "BRANCH_NAME": "'"${BRANCH_NAME}"'",
+                      "BRANCH_ID": "'"${BRANCH_ID}"'",
+                      "PORT": "8080",
+                      "HOSTNAME": "0.0.0.0"
+                    }
+                  },
+                  "ImageRepositoryType": "ECR"
+                },
+                "AuthenticationConfiguration": {
+                  "AccessRoleArn": "${{ secrets.APP_RUNNER_ECR_ACCESS_ROLE_ARN }}"
+                },
+                "AutoDeploymentsEnabled": false
+              }'
+          fi
+
+          echo "service_arn=$SERVICE_ARN" >> $GITHUB_OUTPUT
+
+          # Wait for deployment
+          echo "Waiting for deployment to complete..."
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "${SERVICE_ARN}" \
+              --query 'Service.Status' \
+              --output text)
+
+            echo "Status: $STATUS"
+
+            if [ "$STATUS" = "RUNNING" ]; then
+              break
+            elif [[ "$STATUS" == *"FAILED"* ]]; then
+              echo "Deployment failed!"
+              exit 1
+            fi
+
+            sleep 5
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          # Get service URL
+          SERVICE_URL=$(aws apprunner describe-service \
+            --service-arn "${SERVICE_ARN}" \
+            --query "Service.ServiceUrl" \
+            --output text)
+
+          echo "url=https://${SERVICE_URL}" >> $GITHUB_OUTPUT
+          echo "Deployed to: https://${SERVICE_URL}"
+
+      - name: Store URL and branch mapping in SSM
+        run: |
+          BRANCH_ID="${{ needs.prepare.outputs.branch_id }}"
+          BRANCH_NAME="${{ needs.prepare.outputs.branch_name }}"
+          BRANCH_ORIGINAL="${{ needs.prepare.outputs.branch_original }}"
+
+          # Store the URL
+          PARAM_NAME="/${PROJECT_PREFIX}/preview/${BRANCH_ID}/${{ matrix.app }}"
+          aws ssm put-parameter \
+            --name "${PARAM_NAME}" \
+            --value "${{ steps.deploy.outputs.url }}" \
+            --type "String" \
+            --overwrite \
+            --description "Preview URL for ${{ matrix.app }} on branch ${BRANCH_ORIGINAL}"
+
+          # Store branch name mapping (so we can look up full name from ID)
+          MAPPING_PARAM="/${PROJECT_PREFIX}/preview/${BRANCH_ID}/_branch_name"
+          aws ssm put-parameter \
+            --name "${MAPPING_PARAM}" \
+            --value "${BRANCH_ORIGINAL}" \
+            --type "String" \
+            --overwrite \
+            --description "Branch name mapping for preview ID ${BRANCH_ID}"
+
+          echo "Stored URL in SSM: ${PARAM_NAME}"
+          echo "Stored branch mapping: ${MAPPING_PARAM} -> ${BRANCH_ORIGINAL}"
+
+      - name: Collect URLs
+        id: collect-urls
+        run: |
+          echo "urls={\"${{ matrix.app }}\": \"${{ steps.deploy.outputs.url }}\"}" >> $GITHUB_OUTPUT
+
+  comment:
+    name: Post PR Comment
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy]
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get all preview URLs
+        id: urls
+        run: |
+          BRANCH_ID="${{ needs.prepare.outputs.branch_id }}"
+          ALL_APPS=("core" "lp" "platform" "templates" "release-notes" "kitchen-sink" "docs")
+
+          URLS=""
+          for APP in "${ALL_APPS[@]}"; do
+            PARAM_NAME="/${PROJECT_PREFIX}/preview/${BRANCH_ID}/${APP}"
+            URL=$(aws ssm get-parameter --name "${PARAM_NAME}" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+            if [ -n "$URL" ] && [ "$URL" != "None" ]; then
+              URLS="${URLS}\n| ${APP} | [${URL}](${URL}) |"
+            fi
+          done
+
+          echo "urls<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$URLS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '## Preview Deployment'
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            ## Preview Deployment
+
+            **Status:** ${{ needs.deploy.result == 'success' && 'Deployed' || needs.prepare.outputs.has_changes == 'false' && 'No changes detected' || 'Failed' }}
+            **Branch:** `${{ needs.prepare.outputs.branch_original }}`
+            **Commit:** `${{ github.sha }}`
+
+            ### Deployed Apps
+            ${{ needs.prepare.outputs.has_changes == 'false' && 'No apps were affected by this change.' || '' }}
+
+            | App | URL |
+            |-----|-----|
+            ${{ steps.urls.outputs.urls }}
+
+            ### Affected Apps
+            ```json
+            ${{ needs.prepare.outputs.apps }}
+            ```
+
+            ---
+            > These preview environments are ephemeral and will be automatically cleaned up when the branch is deleted.
+
+            *Last updated: ${{ github.event.pull_request.updated_at || 'N/A' }}*
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Preview Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ needs.prepare.outputs.branch_original }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch ID:** \`${{ needs.prepare.outputs.branch_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Has Changes: ${{ needs.prepare.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy Result: ${{ needs.deploy.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Affected Apps" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          echo '${{ needs.prepare.outputs.apps }}' >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

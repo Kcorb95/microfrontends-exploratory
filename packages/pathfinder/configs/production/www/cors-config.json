@@ -1,0 +1,7 @@
+{
+  "allowedOrigins": ["*"],
+  "allowedMethods": ["GET", "HEAD", "OPTIONS"],
+  "allowedHeaders": ["*"],
+  "exposeHeaders": [],
+  "maxAge": 86400
+}

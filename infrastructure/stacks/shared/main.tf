@@ -1,0 +1,53 @@
+/**
+ * Shared Stack
+ * VPC, ECR, OIDC, Valkey, Edge Configs S3
+ */
+
+terraform {
+  required_version = ">= 1.6"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project     = var.project
+      Environment = var.environment
+      ManagedBy   = "terraform"
+      Stack       = "shared"
+    }
+  }
+}
+
+# Provider for Lambda@Edge (must be us-east-1)
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = var.project
+      Environment = var.environment
+      ManagedBy   = "terraform"
+      Stack       = "shared"
+    }
+  }
+}
+
+locals {
+  # All 7 apps (no blog)
+  app_names = ["core", "lp", "platform", "templates", "release-notes", "kitchen-sink", "docs"]
+
+  tags = {
+    Project     = var.project
+    Environment = var.environment
+  }
+}

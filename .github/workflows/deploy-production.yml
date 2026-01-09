@@ -1,0 +1,265 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: 'Apps to deploy (comma-separated, or "all")'
+        required: false
+        default: 'affected'
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_API: ${{ vars.TURBO_API }}
+  TURBO_TEAM: micro-frontends-poc
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.apps.outputs.list }}
+      matrix: ${{ steps.apps.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Determine apps to deploy
+        id: apps
+        run: |
+          ALL_APPS='["core","lp","platform","templates","release-notes","kitchen-sink","docs"]'
+
+          if [ "${{ github.event.inputs.apps }}" = "all" ]; then
+            APPS="$ALL_APPS"
+          elif [ -n "${{ github.event.inputs.apps }}" ] && [ "${{ github.event.inputs.apps }}" != "affected" ]; then
+            # Convert comma-separated input to JSON array
+            APPS=$(echo '${{ github.event.inputs.apps }}' | jq -R 'split(",") | map(gsub("\\s"; ""))')
+          else
+            # Detect affected apps
+            AFFECTED=$(pnpm turbo run build --affected --dry-run=json 2>/dev/null || echo '{"packages":[]}')
+            APPS=$(echo "$AFFECTED" | jq -r '[.packages[] | select(startswith("@apps/")) | ltrimstr("@apps/")] | unique')
+          fi
+
+          echo "Apps to deploy: $APPS"
+          echo "list=$APPS" >> $GITHUB_OUTPUT
+
+          # Create matrix for parallel builds
+          MATRIX=$(echo "$APPS" | jq -c '{app: .}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    name: Build & Push - ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.apps != '[]'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/micro-frontends-poc/${{ matrix.app }}:prod-${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/micro-frontends-poc/${{ matrix.app }}:prod-latest
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          build-args: |
+            NODE_ENV=production
+
+  deploy:
+    name: Deploy - ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Deploy to App Runner
+        id: deploy
+        run: |
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='micro-frontends-poc-${{ matrix.app }}-production'].ServiceArn" \
+            --output text)
+
+          if [ -z "$SERVICE_ARN" ]; then
+            echo "Service not found for ${{ matrix.app }}"
+            exit 1
+          fi
+
+          echo "Deploying to service: $SERVICE_ARN"
+
+          # Wait for any in-progress deployment to complete (poll every 60s, max 10 attempts)
+          echo "Checking for in-progress deployments..."
+          chmod +x .github/scripts/wait-for-deployment.sh
+          .github/scripts/wait-for-deployment.sh "$SERVICE_ARN" 10 60
+
+          # Start deployment
+          aws apprunner start-deployment --service-arn "$SERVICE_ARN"
+
+          # Wait for deployment to complete
+          echo "Waiting for deployment to complete..."
+          aws apprunner wait service-running --service-arn "$SERVICE_ARN"
+
+          # Get service URL
+          SERVICE_URL=$(aws apprunner describe-service \
+            --service-arn "$SERVICE_ARN" \
+            --query "Service.ServiceUrl" \
+            --output text)
+
+          echo "url=https://$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: https://$SERVICE_URL"
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying health check..."
+          HEALTH_URL="${{ steps.deploy.outputs.url }}/api/health"
+
+          for i in {1..10}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $HTTP_STATUS, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Health check failed after 10 attempts"
+          exit 1
+
+  invalidate-cache:
+    name: Invalidate CloudFront
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy]
+    if: success()
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Invalidate WWW CloudFront
+        run: |
+          # Only invalidate if www apps were deployed
+          WWW_APPS='["core","lp","platform","templates","release-notes","kitchen-sink"]'
+          DEPLOYED='${{ needs.detect-changes.outputs.apps }}'
+
+          # Check if any www app was deployed
+          NEEDS_INVALIDATION=$(echo "$DEPLOYED" | jq --argjson www "$WWW_APPS" 'any(. as $d | $www[] == $d)')
+
+          if [ "$NEEDS_INVALIDATION" = "true" ]; then
+            echo "Invalidating WWW CloudFront distribution..."
+            if [ -n "${{ vars.WWW_DISTRIBUTION_ID }}" ]; then
+              aws cloudfront create-invalidation \
+                --distribution-id ${{ vars.WWW_DISTRIBUTION_ID }} \
+                --paths "/*"
+              echo "CloudFront invalidation created"
+            else
+              echo "WWW_DISTRIBUTION_ID not set, skipping invalidation"
+            fi
+          else
+            echo "No www apps deployed, skipping CloudFront invalidation"
+          fi
+
+      - name: Invalidate Docs CloudFront
+        run: |
+          # Check if docs was deployed
+          DEPLOYED='${{ needs.detect-changes.outputs.apps }}'
+          HAS_DOCS=$(echo "$DEPLOYED" | jq 'any(. == "docs")')
+
+          if [ "$HAS_DOCS" = "true" ]; then
+            echo "Invalidating Docs CloudFront distribution..."
+            if [ -n "${{ vars.DOCS_DISTRIBUTION_ID }}" ]; then
+              aws cloudfront create-invalidation \
+                --distribution-id ${{ vars.DOCS_DISTRIBUTION_ID }} \
+                --paths "/*"
+              echo "Docs CloudFront invalidation created"
+            else
+              echo "DOCS_DISTRIBUTION_ID not set, skipping invalidation"
+            fi
+          else
+            echo "Docs not deployed, skipping CloudFront invalidation"
+          fi
+
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy, invalidate-cache]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Production Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployed Apps" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          echo '${{ needs.detect-changes.outputs.apps }}' >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### CloudFront Invalidation" >> $GITHUB_STEP_SUMMARY
+          echo "Status: ${{ needs.invalidate-cache.result }}" >> $GITHUB_STEP_SUMMARY

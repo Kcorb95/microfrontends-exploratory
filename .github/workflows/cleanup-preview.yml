@@ -1,0 +1,244 @@
+name: Cleanup Preview
+
+on:
+  delete:
+    branches:
+      - '!main'
+      - '!production'
+      - '!beta'
+      - '**'
+  schedule:
+    # Run daily at 3 AM UTC to clean up orphaned resources
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      branch_name:
+        description: 'Branch name to cleanup (optional - for manual cleanup)'
+        required: false
+      cleanup_all_orphaned:
+        description: 'Clean up all orphaned preview environments older than 7 days'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_PREFIX: micro-frontends-poc
+
+jobs:
+  cleanup-branch:
+    name: Cleanup Branch Preview
+    runs-on: ubuntu-latest
+    if: github.event_name == 'delete' || (github.event_name == 'workflow_dispatch' && github.event.inputs.branch_name != '')
+    steps:
+      - name: Generate branch identifiers
+        id: branch-name
+        run: |
+          # Get branch name from event
+          if [ "${{ github.event_name }}" = "delete" ]; then
+            BRANCH_NAME="${{ github.event.ref }}"
+          else
+            BRANCH_NAME="${{ github.event.inputs.branch_name }}"
+          fi
+
+          # Skip if protected branch
+          if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "production" ] || [ "$BRANCH_NAME" = "beta" ]; then
+            echo "Protected branch, skipping cleanup"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Generate short ID using same algorithm as deploy-preview.yml
+          # SHA256 hash of branch name, first 12 characters
+          BRANCH_ID=$(echo -n "$BRANCH_NAME" | sha256sum | cut -c1-12)
+
+          echo "Original branch: $BRANCH_NAME"
+          echo "Branch ID (for AWS resources): $BRANCH_ID"
+          echo "branch_id=$BRANCH_ID" >> $GITHUB_OUTPUT
+          echo "branch_original=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        if: steps.branch-name.outputs.skip != 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete App Runner Services
+        if: steps.branch-name.outputs.skip != 'true'
+        run: |
+          BRANCH_ID="${{ steps.branch-name.outputs.branch_id }}"
+          BRANCH_ORIGINAL="${{ steps.branch-name.outputs.branch_original }}"
+          ALL_APPS=("core" "lp" "platform" "templates" "release-notes" "kitchen-sink" "docs")
+
+          echo "Cleaning up preview services for branch: $BRANCH_ORIGINAL (ID: $BRANCH_ID)"
+
+          for APP in "${ALL_APPS[@]}"; do
+            SERVICE_NAME="${PROJECT_PREFIX}-${APP}-preview-${BRANCH_ID}"
+
+            echo "Looking for service: $SERVICE_NAME"
+
+            SERVICE_ARN=$(aws apprunner list-services \
+              --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceArn" \
+              --output text || echo "")
+
+            if [ -n "$SERVICE_ARN" ] && [ "$SERVICE_ARN" != "None" ]; then
+              echo "Deleting App Runner service: $SERVICE_NAME"
+              aws apprunner delete-service --service-arn "$SERVICE_ARN" || true
+              echo "Service deletion initiated"
+            else
+              echo "Service not found: $SERVICE_NAME"
+            fi
+          done
+
+      - name: Remove SSM Parameters
+        if: steps.branch-name.outputs.skip != 'true'
+        run: |
+          BRANCH_ID="${{ steps.branch-name.outputs.branch_id }}"
+          BRANCH_ORIGINAL="${{ steps.branch-name.outputs.branch_original }}"
+
+          echo "Removing SSM parameters for branch: $BRANCH_ORIGINAL (ID: $BRANCH_ID)"
+
+          # List and delete all parameters for this branch (including app URLs and branch mapping)
+          PARAMS=$(aws ssm get-parameters-by-path \
+            --path "/${PROJECT_PREFIX}/preview/${BRANCH_ID}" \
+            --query "Parameters[].Name" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -n "$PARAMS" ]; then
+            for PARAM in $PARAMS; do
+              echo "Deleting parameter: $PARAM"
+              aws ssm delete-parameter --name "$PARAM" || true
+            done
+          else
+            echo "No SSM parameters found for branch ID: $BRANCH_ID"
+          fi
+
+      - name: Login to Amazon ECR
+        if: steps.branch-name.outputs.skip != 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Clean up ECR images
+        if: steps.branch-name.outputs.skip != 'true'
+        run: |
+          BRANCH_ID="${{ steps.branch-name.outputs.branch_id }}"
+          BRANCH_ORIGINAL="${{ steps.branch-name.outputs.branch_original }}"
+          ALL_APPS=("core" "lp" "platform" "templates" "release-notes" "kitchen-sink" "docs")
+
+          echo "Cleaning up ECR images for branch: $BRANCH_ORIGINAL (ID: $BRANCH_ID)"
+
+          for APP in "${ALL_APPS[@]}"; do
+            REPO_NAME="${PROJECT_PREFIX}/${APP}"
+
+            # Check if repository exists
+            if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
+              echo "Repository $REPO_NAME does not exist, skipping"
+              continue
+            fi
+
+            # List all images with this branch ID prefix (e.g., preview-abc123def456-*)
+            IMAGE_TAGS=$(aws ecr list-images \
+              --repository-name "$REPO_NAME" \
+              --query "imageIds[?imageTag!=null && contains(imageTag, 'preview-${BRANCH_ID}')].imageTag" \
+              --output text 2>/dev/null || echo "")
+
+            if [ -n "$IMAGE_TAGS" ] && [ "$IMAGE_TAGS" != "None" ]; then
+              echo "Found images to delete in $REPO_NAME: $IMAGE_TAGS"
+
+              for TAG in $IMAGE_TAGS; do
+                echo "Deleting image: $REPO_NAME:$TAG"
+                aws ecr batch-delete-image \
+                  --repository-name "$REPO_NAME" \
+                  --image-ids "imageTag=$TAG" || true
+              done
+            else
+              echo "No ECR images found for $REPO_NAME with branch ID prefix"
+            fi
+          done
+
+  cleanup-orphaned:
+    name: Cleanup Orphaned Previews
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.cleanup_all_orphaned == 'true')
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Clean up orphaned preview services
+        run: |
+          echo "Checking for orphaned preview services older than 7 days..."
+
+          CURRENT_TIME=$(date +%s)
+          SEVEN_DAYS_AGO=$((CURRENT_TIME - 604800))
+
+          # Get all preview services
+          PREVIEW_SERVICES=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?contains(ServiceName, '${PROJECT_PREFIX}') && contains(ServiceName, 'preview')]" \
+            --output json)
+
+          echo "$PREVIEW_SERVICES" | jq -c '.[]' | while read -r SERVICE; do
+            SERVICE_NAME=$(echo "$SERVICE" | jq -r '.ServiceName')
+            SERVICE_ARN=$(echo "$SERVICE" | jq -r '.ServiceArn')
+            CREATED_AT=$(echo "$SERVICE" | jq -r '.CreatedAt')
+
+            # Convert created time to epoch
+            CREATED_TIME=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
+
+            if [ "$CREATED_TIME" -lt "$SEVEN_DAYS_AGO" ] && [ "$CREATED_TIME" -gt 0 ]; then
+              echo "Deleting old preview service: $SERVICE_NAME (created: $CREATED_AT)"
+              aws apprunner delete-service --service-arn "$SERVICE_ARN" || true
+            else
+              echo "Keeping service: $SERVICE_NAME (created: $CREATED_AT)"
+            fi
+          done
+
+      - name: Clean up old ECR preview images
+        run: |
+          echo "Cleaning up old ECR preview images..."
+
+          ALL_APPS=("core" "lp" "platform" "templates" "release-notes" "kitchen-sink" "docs")
+          CUTOFF_DATE=$(date -d "7 days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -v-7d +%Y-%m-%dT%H:%M:%S)
+
+          for APP in "${ALL_APPS[@]}"; do
+            REPO_NAME="${PROJECT_PREFIX}/${APP}"
+
+            # Check if repository exists
+            if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
+              continue
+            fi
+
+            echo "Checking $REPO_NAME for old preview images..."
+
+            # Get preview images older than 7 days
+            OLD_IMAGES=$(aws ecr describe-images \
+              --repository-name "$REPO_NAME" \
+              --query "imageDetails[?contains(imageTags[0], 'preview-') && imagePushedAt<'$CUTOFF_DATE'].imageDigest" \
+              --output text 2>/dev/null || echo "")
+
+            if [ -n "$OLD_IMAGES" ] && [ "$OLD_IMAGES" != "None" ]; then
+              for DIGEST in $OLD_IMAGES; do
+                echo "Deleting old image: $REPO_NAME@$DIGEST"
+                aws ecr batch-delete-image \
+                  --repository-name "$REPO_NAME" \
+                  --image-ids "imageDigest=$DIGEST" || true
+              done
+            fi
+          done
+
+      - name: Summary
+        run: |
+          echo "## Orphaned Preview Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Cleaned up preview environments and ECR images older than 7 days." >> $GITHUB_STEP_SUMMARY

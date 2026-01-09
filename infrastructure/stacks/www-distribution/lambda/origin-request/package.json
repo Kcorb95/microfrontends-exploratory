@@ -1,0 +1,11 @@
+{
+  "name": "origin-request-lambda",
+  "version": "1.0.0",
+  "description": "Lambda@Edge origin request handler for www distribution",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests yet\""
+  },
+  "author": "",
+  "license": "ISC"
+}

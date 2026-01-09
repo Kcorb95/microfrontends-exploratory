@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CSP Domains Configuration",
+  "description": "Content Security Policy whitelist domains",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["url", "service"],
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Domain URL to whitelist",
+        "format": "uri"
+      },
+      "service": {
+        "type": "string",
+        "description": "Name of the service for documentation"
+      }
+    },
+    "additionalProperties": false
+  }
+}

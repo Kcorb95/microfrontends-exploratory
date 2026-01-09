@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cache Rules Configuration",
+  "description": "Cache-Control header rules by path pattern",
+  "type": "object",
+  "required": ["rules", "default"],
+  "properties": {
+    "rules": {
+      "type": "array",
+      "description": "Cache rules in order of priority",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "cacheControl"],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "URL pattern to match (supports * wildcard)"
+          },
+          "cacheControl": {
+            "type": "string",
+            "description": "Cache-Control header value"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "default": {
+      "type": "string",
+      "description": "Default Cache-Control header value"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,8 @@
+{
+  "extends": "@repo/config/jsconfig/library",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "include": ["src/**/*.js"],
+  "exclude": ["node_modules"]
+}

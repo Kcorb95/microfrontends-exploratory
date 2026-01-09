@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CORS Configuration",
+  "description": "Cross-Origin Resource Sharing settings",
+  "type": "object",
+  "required": ["allowedOrigins", "allowedMethods"],
+  "properties": {
+    "allowedOrigins": {
+      "type": "array",
+      "description": "Allowed origin domains",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "allowedMethods": {
+      "type": "array",
+      "description": "Allowed HTTP methods",
+      "items": {
+        "type": "string",
+        "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+      },
+      "minItems": 1
+    },
+    "allowedHeaders": {
+      "type": "array",
+      "description": "Allowed request headers",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exposeHeaders": {
+      "type": "array",
+      "description": "Headers to expose to the browser",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxAge": {
+      "type": "integer",
+      "description": "Max age for preflight cache in seconds",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

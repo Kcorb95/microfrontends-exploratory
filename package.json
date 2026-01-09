@@ -1,0 +1,59 @@
+{
+  "name": "micro-frontends-poc",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "build:core": "turbo run build --filter=@apps/core",
+    "build:lp": "turbo run build --filter=@apps/lp",
+    "build:docs": "turbo run build --filter=@apps/docs",
+    "build:blog": "turbo run build --filter=@apps/blog",
+    "build:platform": "turbo run build --filter=@apps/platform",
+    "build:templates": "turbo run build --filter=@apps/templates",
+    "build:release-notes": "turbo run build --filter=@apps/release-notes",
+    "dev": "turbo run dev",
+    "dev:gateway": "turbo run dev:gateway & sleep 3 && node scripts/dev-gateway.mjs",
+    "dev:core": "turbo run dev --filter=@apps/core",
+    "dev:lp": "turbo run dev --filter=@apps/lp",
+    "dev:docs": "turbo run dev --filter=@apps/docs",
+    "dev:blog": "turbo run dev --filter=@apps/blog",
+    "dev:platform": "turbo run dev --filter=@apps/platform",
+    "dev:templates": "turbo run dev --filter=@apps/templates",
+    "dev:release-notes": "turbo run dev --filter=@apps/release-notes",
+    "start:core": "pnpm --filter=@apps/core start",
+    "start:lp": "pnpm --filter=@apps/lp start",
+    "start:docs": "pnpm --filter=@apps/docs start",
+    "start:blog": "pnpm --filter=@apps/blog start",
+    "start:platform": "pnpm --filter=@apps/platform start",
+    "start:templates": "pnpm --filter=@apps/templates start",
+    "start:release-notes": "pnpm --filter=@apps/release-notes start",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{js,jsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{js,jsx,json,md,css}\"",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "eslint": "^8.57.0",
+    "http-proxy": "^1.18.1",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.2.0",
+    "turbo": "^2.3.0"
+  },
+  "lint-staged": {
+    "*.{js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,yml,yaml}": [
+      "prettier --write"
+    ]
+  }
+}

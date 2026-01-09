@@ -1,0 +1,31 @@
+{
+  "name": "@apps/lp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "dev:gateway": "next dev -p 4001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@repo/analytics": "workspace:*",
+    "@repo/cache": "workspace:*",
+    "@repo/prismic": "workspace:*",
+    "@repo/search": "workspace:*",
+    "@repo/ui": "workspace:*",
+    "@repo/utils": "workspace:*",
+    "next": "^16.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.27.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.17"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "origins": {
+    "core": { "appRunnerUrl": "PLACEHOLDER-core.us-east-1.awsapprunner.com" },
+    "lp": { "appRunnerUrl": "PLACEHOLDER-lp.us-east-1.awsapprunner.com" },
+    "docs": { "appRunnerUrl": "PLACEHOLDER-docs.us-east-1.awsapprunner.com" },
+    "platform": { "appRunnerUrl": "PLACEHOLDER-platform.us-east-1.awsapprunner.com" },
+    "templates": { "appRunnerUrl": "PLACEHOLDER-templates.us-east-1.awsapprunner.com" },
+    "release-notes": { "appRunnerUrl": "PLACEHOLDER-release-notes.us-east-1.awsapprunner.com" },
+    "kitchen-sink": { "appRunnerUrl": "PLACEHOLDER-kitchen-sink.us-east-1.awsapprunner.com" }
+  }
+}

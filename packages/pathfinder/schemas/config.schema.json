@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Origins Configuration",
+  "description": "App Runner origin URLs for CloudFront routing",
+  "type": "object",
+  "required": ["origins"],
+  "properties": {
+    "origins": {
+      "type": "object",
+      "description": "Map of app names to App Runner URLs",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["appRunnerUrl"],
+        "properties": {
+          "appRunnerUrl": {
+            "type": "string",
+            "description": "App Runner service URL",
+            "format": "hostname"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

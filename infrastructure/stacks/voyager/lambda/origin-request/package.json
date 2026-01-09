@@ -1,0 +1,11 @@
+{
+  "name": "voyager-origin-request",
+  "version": "1.0.0",
+  "description": "Lambda@Edge origin request handler for Voyager SPA",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests yet\""
+  },
+  "author": "",
+  "license": "ISC"
+}

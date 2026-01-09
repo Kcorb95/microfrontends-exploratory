@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Redirects Configuration",
+  "description": "URL redirect rules for CloudFront",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["sourcePath", "targetPath", "redirectType"],
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "description": "Source URL path pattern",
+        "pattern": "^/.*"
+      },
+      "targetPath": {
+        "type": "string",
+        "description": "Target URL path or full URL"
+      },
+      "redirectType": {
+        "type": "string",
+        "description": "Type of redirect",
+        "enum": ["one-to-one", "pattern", "mirror"]
+      },
+      "permanent": {
+        "type": "boolean",
+        "description": "Whether this is a 301 (permanent) or 302 (temporary) redirect",
+        "default": true
+      },
+      "preserveQuery": {
+        "type": "boolean",
+        "description": "Whether to preserve query parameters in the redirect",
+        "default": true
+      },
+      "excludePaths": {
+        "type": "array",
+        "description": "Paths to exclude from this redirect rule",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "additionalProperties": false
+  }
+}
