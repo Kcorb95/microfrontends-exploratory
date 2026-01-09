@@ -22,13 +22,62 @@ This document covers common workflows and procedures for the micro-frontends mon
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd micro-frontends-poc
+git clone https://github.com/Kcorb95/microfrontends-exploratory.git
+cd microfrontends-exploratory
 
 # Install dependencies (requires pnpm)
 pnpm install
 
-# Start all apps in development mode
+# Start all apps with the dev gateway (RECOMMENDED)
+pnpm dev:gateway
+
+# Open http://localhost:3000
+```
+
+### Dev Gateway (Recommended)
+
+The dev gateway provides a **single entry point** to all apps, mimicking production routing:
+
+```bash
+pnpm dev:gateway
+```
+
+This starts:
+1. All Next.js apps on their individual ports (4000-4006)
+2. A reverse proxy gateway on **port 3000**
+
+**Benefits:**
+- Access all apps from `http://localhost:3000` with path-based routing
+- Test cross-app navigation without port switching
+- Matches production behavior (CloudFront + Lambda@Edge)
+- Hot module reloading works seamlessly
+
+**Gateway Routes:**
+| Path | App |
+|------|-----|
+| `/` | core |
+| `/pricing`, `/downloads`, `/dev` | core |
+| `/lp/*` | lp |
+| `/docs/*` | docs |
+| `/platform/*` | platform |
+| `/templates/*` | templates |
+| `/release-notes/*` | release-notes |
+| `/*` (catch-all) | kitchen-sink |
+
+### Development Tools
+
+Once the gateway is running, explore the POC:
+
+- **Dev Navigator**: http://localhost:3000/dev - Overview of all apps, routes, and packages
+- **Dev Nav Panel**: Floating button in bottom-left corner for quick navigation
+- **App Indicator**: Badge in header showing which app is serving the current page
+
+### Direct App Access (Alternative)
+
+If you need to access apps directly (bypassing the gateway):
+
+```bash
+# Start all apps without gateway
 pnpm dev
 
 # Or start a specific app
@@ -39,15 +88,16 @@ pnpm --filter @apps/docs dev
 
 ### Development Ports
 
-| App | Port | URL |
-|-----|------|-----|
-| core | 3000 | http://localhost:3000 |
-| lp | 3001 | http://localhost:3001 |
-| docs | 3002 | http://localhost:3002 |
-| platform | 3004 | http://localhost:3004 |
-| templates | 3005 | http://localhost:3005 |
-| release-notes | 3006 | http://localhost:3006 |
-| kitchen-sink | 3007 | http://localhost:3007 |
+| App | Direct Port | Gateway Path |
+|-----|-------------|--------------|
+| Gateway | 3000 | - |
+| core | 4000 | `/`, `/pricing`, `/downloads` |
+| lp | 4001 | `/lp/*` |
+| docs | 4002 | `/docs/*` |
+| platform | 4003 | `/platform/*` |
+| templates | 4004 | `/templates/*` |
+| release-notes | 4005 | `/release-notes/*` |
+| kitchen-sink | 4006 | `/*` (catch-all) |
 
 ### Working with Packages
 
@@ -707,7 +757,8 @@ Preview deployments fail if the branch name is too long (>40 characters after sa
 ### Development
 
 ```bash
-pnpm dev                           # Start all apps
+pnpm dev:gateway                   # Start gateway + all apps (RECOMMENDED)
+pnpm dev                           # Start all apps without gateway
 pnpm --filter @apps/core dev       # Start specific app
 pnpm turbo run build               # Build all
 pnpm turbo run build --affected    # Build only changed
