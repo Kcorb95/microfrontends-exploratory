@@ -7,9 +7,11 @@ on:
       - '!production'
       - '!beta'
       - '**'
-  schedule:
-    # Run daily at 3 AM UTC to clean up orphaned resources
-    - cron: '0 3 * * *'
+  # DISABLED: Schedule trigger commented out to prevent automatic runs
+  # Uncomment the following to re-enable scheduled cleanup:
+  # schedule:
+  #   # Run daily at 3 AM UTC to clean up orphaned resources
+  #   - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       branch_name:
