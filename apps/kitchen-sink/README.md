@@ -1,105 +1,35 @@
 # Kitchen Sink App
 
-The kitchen-sink app is the **catch-all** application for the micro-frontends architecture. It handles all routes that don't match other specific apps (core, lp, platform, templates, release-notes).
+Catch-all app for experimental features and unmatched routes.
+
+## Routes
+
+This app handles: `/*` (any path not matched by other apps)
+
+See [App-Port-Path Mapping](../../docs/reference/app-port-path-mapping.md) for the complete routing table.
 
 ## Purpose
 
-- **Catch-all routing**: Handles any URL path not claimed by other apps
-- **Miscellaneous pages**: Pages like `/community/`, `/events/`, `/about/`, etc.
-- **Keeps core stable**: By routing unknown paths here, the core app stays lean and focused
-- **Experimentation**: Safe place to add new pages before promoting them to dedicated apps
+The kitchen-sink app serves as:
 
-## Route Matching
+- **Catch-all** for unmatched URLs
+- **Experimentation space** for new features
+- **Staging area** for pages before they move to dedicated apps
 
-Routes are matched **longest-first** in pathfinder. Kitchen-sink receives requests when no other route matches:
+## When to Promote Pages
 
-```json
-[
-  { "path": "/", "app": "core", "exact": true },
-  { "path": "/home*", "app": "core" },
-  { "path": "/pricing*", "app": "core" },
-  { "path": "/downloads*", "app": "core" },
-  { "path": "/enterprise*", "app": "core" },
-  { "path": "/lp*", "app": "lp" },
-  { "path": "/platform*", "app": "platform" },
-  { "path": "/templates*", "app": "templates" },
-  { "path": "/release-notes*", "app": "release-notes" },
-  { "path": "/*", "app": "kitchen-sink" }  // ← Catch-all
-]
-```
+Move pages out of kitchen-sink when they:
+- Become stable and well-tested
+- Need dedicated team ownership
+- Have enough related pages to justify a new app
 
-## Asset Prefix
-
-In production, static assets are served with the prefix `/_mk-www-kitchen-sink/`:
-
-```javascript
-// next.config.js
-assetPrefix: process.env.NODE_ENV === 'production' ? '/_mk-www-kitchen-sink' : '',
-```
-
-This prevents conflicts with other apps' `/_next/static/` paths.
+See [Create New App](../../docs/how-to/create-new-app.md) for instructions.
 
 ## Development
 
 ```bash
-# Start dev server (port 3006)
-pnpm dev
-
-# Build for production
-pnpm build
-
-# Start production server
-pnpm start
+pnpm dev:gateway    # Recommended: Start with routing (port 3000)
+pnpm dev            # Direct access (port 3000)
 ```
 
-## Adding New Pages
-
-1. Create the page in `app/` directory
-2. (Optional) Add specific route in pathfinder if you want a dedicated prefix
-3. Deploy
-
-Example - adding `/community/` page:
-
-```jsx
-// app/community/page.jsx
-export default function CommunityPage() {
-  return <h1>Community</h1>;
-}
-```
-
-Since `/community*` doesn't match any specific app route, it automatically goes to kitchen-sink.
-
-## When to Create a Dedicated App
-
-If a section grows large enough, consider moving it to its own app:
-
-1. Create new app in `apps/`
-2. Add App Runner config in `infrastructure/stacks/app-runner/apps.tf`
-3. Add routes in `packages/pathfinder/configs/`
-4. Deploy infrastructure, then pathfinder configs
-
-## Directory Structure
-
-```
-apps/kitchen-sink/
-├── app/
-│   ├── api/
-│   │   └── health/
-│   │       └── route.js      # Health check endpoint
-│   ├── layout.jsx            # Root layout
-│   └── page.jsx              # Home page
-├── Dockerfile                # Production container
-├── next.config.js            # Next.js configuration
-├── package.json
-└── tailwind.config.js
-```
-
-## Health Check
-
-Health check endpoint for App Runner:
-
-```
-GET /api/health
-```
-
-Returns `200 OK` with JSON body when healthy.
+See [Local Development Guide](../../docs/how-to/local-development.md) for setup instructions.
