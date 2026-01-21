@@ -3,18 +3,22 @@
 /**
  * Dev Gateway - Local reverse proxy for micro-frontends development
  *
- * Routes and origins are loaded from packages/pathfinder/configs/development/www/
+ * Routes and origins are loaded from packages/pathfinder/configs/local/www/
  */
 
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import httpProxy from 'http-proxy';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GATEWAY_PORT = 3000;
-const CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/development/www');
+
+// Use local config, fallback to development for backwards compatibility
+const LOCAL_CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/local/www');
+const DEV_CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/development/www');
+const CONFIG_PATH = existsSync(LOCAL_CONFIG_PATH) ? LOCAL_CONFIG_PATH : DEV_CONFIG_PATH;
 
 function loadConfig(filename) {
   const filepath = join(CONFIG_PATH, filename);
@@ -180,13 +184,14 @@ const displayRoutes = routes
     return `  ${path.padEnd(25)} -> ${r.app} (:${port})`;
   });
 
+const configEnv = CONFIG_PATH.includes('/local/') ? 'local' : 'development';
 server.listen(GATEWAY_PORT, () => {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐
 │                   DEV GATEWAY STARTED                       │
 ├─────────────────────────────────────────────────────────────┤
 │  URL: http://localhost:${GATEWAY_PORT}                               │
-│  Config: packages/pathfinder/configs/development/www/       │
+│  Config: packages/pathfinder/configs/${configEnv}/www/       │
 ├─────────────────────────────────────────────────────────────┤
 │  Routes:                                                    │
 ${displayRoutes.map((r) => `│${r.padEnd(61)}│`).join('\n')}

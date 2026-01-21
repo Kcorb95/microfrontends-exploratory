@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "sourcePath": "/blog",
+    "targetPath": "/lp/blog",
+    "redirectType": "one-to-one",
+    "preserveQuery": true,
+    "permanent": true,
+    "comment": "Legacy blog URL redirect"
+  },
+  {
+    "sourcePath": "/blog/*",
+    "targetPath": "/lp/blog/*",
+    "redirectType": "pattern",
+    "preserveQuery": false,
+    "permanent": true,
+    "comment": "Legacy blog posts redirect"
+  }
+]

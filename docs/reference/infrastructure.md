@@ -41,7 +41,7 @@ Infrastructure is organized into deployable stacks:
 | **app-runner** | Application hosting | 7 App Runner services (one per app) |
 | **www-distribution** | Main domain routing | CloudFront + Lambda@Edge |
 | **docs-distribution** | Docs domain | Separate CloudFront distribution |
-| **voyager** | Static SPA hosting | S3 + CloudFront for SPAs |
+| **voyager** | CDN for images, SVGs, MP4s, PDFs | S3 + CloudFront for media assets |
 | **turbo-cache** | Build cache | Turborepo remote cache (S3 + Lambda) |
 
 ## Key Components
