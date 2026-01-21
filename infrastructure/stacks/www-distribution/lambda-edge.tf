@@ -1,6 +1,8 @@
 /**
  * Lambda@Edge Functions
  * Origin Request: Route requests to correct App Runner based on path
+ *                 Handles preview branch routing via SSM lookups
+ *                 Uses KeyValueStore for config version checking
  * Viewer Response: Add CSP, CORS, and Cache-Control headers
  */
 
@@ -47,6 +49,42 @@ resource "aws_iam_role_policy_attachment" "lambda_edge_basic" {
   role       = aws_iam_role.lambda_edge.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
+
+# Lambda@Edge permissions for KVS, SSM, and S3
+resource "aws_iam_role_policy" "lambda_edge_permissions" {
+  provider = aws.us_east_1
+  name     = "lambda-edge-permissions"
+  role     = aws_iam_role.lambda_edge.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # KeyValueStore read (for config version checking)
+      {
+        Sid      = "KVSRead"
+        Effect   = "Allow"
+        Action   = ["cloudfront-keyvaluestore:GetKey"]
+        Resource = var.kvs_arn != null ? var.kvs_arn : "*"
+      },
+      # S3 read (for edge configs - fallback if CloudFront CDN unavailable)
+      {
+        Sid      = "S3ConfigRead"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = var.edge_configs_bucket_arn != null ? "${var.edge_configs_bucket_arn}/*" : "*"
+      },
+      # SSM read (for preview branch URL lookups)
+      {
+        Sid      = "SSMPreviewRead"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = "arn:aws:ssm:us-east-1:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/preview/*"
+      }
+    ]
+  })
+}
+
+data "aws_caller_identity" "current" {}
 
 # Origin Request Lambda
 resource "aws_lambda_function" "origin_request" {

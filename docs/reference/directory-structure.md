@@ -154,7 +154,7 @@ infrastructure/
 │   ├── app-runner/          # All App Runner services
 │   ├── www-distribution/    # www.domain.com CloudFront
 │   ├── docs-distribution/   # docs.domain.com CloudFront
-│   └── voyager/             # Static site hosting
+│   └── voyager/             # CDN for media assets (images, SVGs, MP4s, PDFs)
 │
 ├── environments/            # Environment-specific variables
 │   ├── production.tfvars

@@ -1,15 +1,33 @@
 /**
  * CloudFront Distribution
  * Single distribution for www.domain with Lambda@Edge routing
+ * Supports preview branches via wildcard subdomain (*.www.domain-beta.com)
  */
 
-# ACM Certificate (must be in us-east-1 for CloudFront)
+# ACM Certificate for production domain (must be in us-east-1 for CloudFront)
 resource "aws_acm_certificate" "www" {
   count    = var.www_domain != null ? 1 : 0
   provider = aws.us_east_1
 
   domain_name       = var.www_domain
   validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = local.tags
+}
+
+# ACM Certificate for beta domain with wildcard for preview branches
+# Covers: www.domain-beta.com AND *.www.domain-beta.com
+resource "aws_acm_certificate" "beta_wildcard" {
+  count    = var.beta_domain != null ? 1 : 0
+  provider = aws.us_east_1
+
+  domain_name               = "www.${var.beta_domain}"
+  subject_alternative_names = ["*.www.${var.beta_domain}"]
+  validation_method         = "DNS"
 
   lifecycle {
     create_before_destroy = true
@@ -40,8 +58,18 @@ resource "aws_cloudfront_distribution" "www" {
   comment             = "${var.project} - WWW Distribution (${var.environment})"
   default_root_object = ""
   price_class         = var.price_class
-  aliases             = var.www_domain != null ? [var.www_domain] : []
   web_acl_id          = var.web_acl_id
+
+  # Domain aliases
+  # Production: www.domain.com
+  # Beta: www.domain-beta.com, *.www.domain-beta.com (for preview branches)
+  aliases = concat(
+    var.www_domain != null ? [var.www_domain] : [],
+    var.beta_domain != null ? [
+      "www.${var.beta_domain}",
+      "*.www.${var.beta_domain}"
+    ] : []
+  )
 
   # Origins for each www app
   dynamic "origin" {
@@ -138,11 +166,16 @@ resource "aws_cloudfront_distribution" "www" {
     }
   }
 
+  # Use wildcard cert if beta domain is configured, otherwise use www cert
   viewer_certificate {
-    cloudfront_default_certificate = var.www_domain == null
-    acm_certificate_arn            = var.www_domain != null ? aws_acm_certificate.www[0].arn : null
-    ssl_support_method             = var.www_domain != null ? "sni-only" : null
-    minimum_protocol_version       = var.www_domain != null ? "TLSv1.2_2021" : null
+    cloudfront_default_certificate = var.www_domain == null && var.beta_domain == null
+    acm_certificate_arn = (
+      var.beta_domain != null ? aws_acm_certificate.beta_wildcard[0].arn :
+      var.www_domain != null ? aws_acm_certificate.www[0].arn :
+      null
+    )
+    ssl_support_method       = (var.www_domain != null || var.beta_domain != null) ? "sni-only" : null
+    minimum_protocol_version = (var.www_domain != null || var.beta_domain != null) ? "TLSv1.2_2021" : null
   }
 
   tags = local.tags

@@ -86,21 +86,6 @@ Shared packages ensure consistency:
 - Unified analytics tracking (`@repo/analytics`)
 - Common search experience (`@repo/search`)
 
-## When to Use Micro-Frontends
-
-Micro-frontends make sense when you have:
-
-- Multiple teams working on the same domain
-- Different release cadences for different sections
-- A need to isolate risk (e.g., experimental features)
-- Plans to incrementally modernize an existing site
-
-They may be overkill if you have:
-
-- A small team (1-3 developers)
-- A simple site with few pages
-- No need for independent deployments
-
 ## Our Implementation
 
 We use this pattern for our marketing website:

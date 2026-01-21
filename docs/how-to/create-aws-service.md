@@ -10,16 +10,18 @@ Create new infrastructure when you need:
 - Custom CloudFront distributions
 - Specialized caching or processing
 
-## Voyager Pattern: S3 + CloudFront for SPAs
+## Voyager Pattern: S3 + CloudFront for Media Assets
 
-Voyager is our pattern for hosting Single Page Applications with static assets.
+Voyager is our CDN for static media assets like images, SVGs, MP4s, and PDFs.
 
 ### What Voyager Provides
 
-- S3 bucket for static files
-- CloudFront CDN for global distribution
-- Optional Lambda@Edge for SPA routing
+- S3 bucket for media file storage
+- CloudFront CDN for global distribution with long-lived caching
+- CORS configuration for cross-origin media embeds
 - Custom domain support
+
+> **Note:** Voyager is NOT for SPA hosting. Use App Runner for applications.
 
 ### Creating a Voyager-Style Service
 

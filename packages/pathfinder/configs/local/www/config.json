@@ -1,0 +1,11 @@
+{
+  "origins": {
+    "core": { "port": 4000 },
+    "lp": { "port": 4001 },
+    "docs": { "port": 4002 },
+    "platform": { "port": 4003 },
+    "templates": { "port": 4004 },
+    "release-notes": { "port": 4005 },
+    "kitchen-sink": { "port": 4006 }
+  }
+}

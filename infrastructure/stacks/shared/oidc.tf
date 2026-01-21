@@ -17,6 +17,9 @@ module "github_oidc" {
     module.edge_configs.bucket_arn
   ]
 
+  # KeyValueStore for edge config version updates
+  kvs_arn = aws_cloudfront_key_value_store.edge_config_versions.arn
+
   create_terraform_role          = true
   terraform_allowed_repositories = var.github_repositories
 

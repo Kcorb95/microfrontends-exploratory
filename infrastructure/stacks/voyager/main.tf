@@ -1,6 +1,7 @@
 /**
  * Voyager Stack
- * S3 + CloudFront + Lambda@Edge for SPA static assets
+ * CDN for static media assets (images, SVGs, MP4s, PDFs)
+ * NOT for SPA hosting - use App Runner for applications
  */
 
 terraform {
@@ -59,7 +60,7 @@ data "terraform_remote_state" "shared" {
   }
 }
 
-# S3 bucket for static assets
+# S3 bucket for media assets (images, SVGs, MP4s, PDFs)
 module "bucket" {
   source = "../../modules/s3-bucket"
 
@@ -70,6 +71,17 @@ module "bucket" {
   enable_versioning     = true
   block_public_access   = true
   create_cloudfront_oac = true
+
+  # CORS for media embeds from any origin
+  cors_rules = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET", "HEAD"]
+      allowed_origins = ["*"]
+      expose_headers  = ["ETag", "Content-Length", "Content-Type"]
+      max_age_seconds = 3600
+    }
+  ]
 
   tags = local.tags
 }
@@ -147,12 +159,12 @@ resource "aws_acm_certificate" "voyager" {
   tags = local.tags
 }
 
-# CloudFront Distribution
+# CloudFront Distribution for Media Assets
 resource "aws_cloudfront_distribution" "voyager" {
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "${var.project} - Voyager (${var.environment})"
-  default_root_object = "index.html"
+  comment             = "${var.project} - Voyager Media CDN (${var.environment})"
+  default_root_object = ""  # No default root - this is for media, not SPAs
   price_class         = var.price_class
   aliases             = var.voyager_domain != null ? [var.voyager_domain] : []
 
@@ -162,6 +174,7 @@ resource "aws_cloudfront_distribution" "voyager" {
     origin_access_control_id = module.bucket.oac_id
   }
 
+  # Default cache behavior optimized for media assets (images, videos, PDFs)
   default_cache_behavior {
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
@@ -170,9 +183,10 @@ resource "aws_cloudfront_distribution" "voyager" {
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
 
-    min_ttl     = 0
-    default_ttl = 86400    # 1 day
-    max_ttl     = 31536000 # 1 year
+    # Long-lived caching for media assets
+    min_ttl     = 86400      # 1 day minimum
+    default_ttl = 2592000    # 30 days default
+    max_ttl     = 31536000   # 1 year max
 
     forwarded_values {
       query_string = false
@@ -191,9 +205,9 @@ resource "aws_cloudfront_distribution" "voyager" {
     }
   }
 
-  # Static assets (long cache)
+  # Immutable assets with content-addressed filenames (max cache)
   ordered_cache_behavior {
-    path_pattern     = "/static/*"
+    path_pattern     = "/assets/*"
     allowed_methods  = ["GET", "HEAD"]
     cached_methods   = ["GET", "HEAD"]
     target_origin_id = "S3-voyager"
@@ -213,19 +227,18 @@ resource "aws_cloudfront_distribution" "voyager" {
     }
   }
 
-  # SPA fallback for 404/403 errors
+  # Return proper error codes for missing media assets
+  # No SPA fallback - this is a CDN for media files, not an application
   custom_error_response {
     error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
+    response_code         = 404
+    error_caching_min_ttl = 60
   }
 
   custom_error_response {
     error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
+    response_code         = 403
+    error_caching_min_ttl = 60
   }
 
   restrictions {

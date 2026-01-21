@@ -98,6 +98,16 @@ output "edge_configs_distribution_id" {
   value       = aws_cloudfront_distribution.edge_configs.id
 }
 
+output "edge_config_versions_kvs_arn" {
+  description = "Edge config versions KeyValueStore ARN"
+  value       = aws_cloudfront_key_value_store.edge_config_versions.arn
+}
+
+output "edge_config_versions_kvs_id" {
+  description = "Edge config versions KeyValueStore ID"
+  value       = aws_cloudfront_key_value_store.edge_config_versions.id
+}
+
 # GitHub OIDC outputs
 output "github_deploy_role_arn" {
   description = "GitHub Actions deploy role ARN"

@@ -1,6 +1,8 @@
 /**
- * Edge Configs S3 Bucket
- * Stores pathfinder configs (routes, redirects, CSP, CORS, cache rules)
+ * Edge Configs Infrastructure
+ * - S3 bucket: Stores versioned pathfinder configs (routes, redirects, CSP, CORS, cache rules)
+ * - CloudFront: CDN for low-latency config access from Lambda@Edge
+ * - KeyValueStore: Version pointers for instant config invalidation
  */
 
 module "edge_configs" {
@@ -104,4 +106,18 @@ resource "aws_s3_bucket_policy" "edge_configs" {
       }
     ]
   })
+}
+
+# -----------------------------------------------------------------------------
+# KeyValueStore for Config Version Pointers
+# Enables instant invalidation by storing version pointers that Lambda@Edge checks
+# Typical flow:
+#   1. Lambda@Edge checks config_version in KVS (~1ms)
+#   2. If version matches in-memory cache, use cache (0ms)
+#   3. If version changed, fetch new configs from S3 (~50-150ms, once per instance)
+# -----------------------------------------------------------------------------
+
+resource "aws_cloudfront_key_value_store" "edge_config_versions" {
+  name    = "${var.project}-edge-config-versions"
+  comment = "Version pointers for edge configs - enables instant invalidation without CloudFront cache purge"
 }

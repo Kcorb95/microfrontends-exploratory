@@ -1,32 +1,109 @@
 /**
  * Origin Request Lambda@Edge Handler
  * Routes requests to correct App Runner origin based on path
- * Handles redirects from pathfinder configs
+ * Handles redirects and preview branch routing
+ *
+ * Config Loading Strategy:
+ *   1. Check config version in KeyValueStore (~1ms)
+ *   2. If version matches in-memory cache, use cache (0ms)
+ *   3. If version changed, fetch all configs from S3 (~50-150ms, once per instance)
+ *
+ * Preview Branch Routing:
+ *   - Requests to {branch}.www.domain-beta.com are routed to preview App Runner services
+ *   - Preview URLs are looked up via SSM parameters
  */
 
 'use strict';
 
-// Routes configuration (loaded from S3 at cold start, cached in memory)
-// This will be fetched from edge-configs S3 bucket via CloudFront
-let routesCache = null;
-let redirectsCache = null;
-let configCache = null;
-let lastFetchTime = 0;
-const CACHE_TTL_MS = 60000; // 1 minute cache
-
-// Edge configs CDN URL (injected at deploy time or hardcoded)
+// Configuration
 const CONFIG_CDN_URL = process.env.EDGE_CONFIGS_CDN_URL || '';
 const ENVIRONMENT = process.env.ENVIRONMENT || 'production';
+const KVS_ARN = process.env.KVS_ARN || '';
+const PROJECT_PREFIX = process.env.PROJECT_PREFIX || 'micro-frontends-poc';
+const BETA_DOMAIN = process.env.BETA_DOMAIN || '';
+
+// In-memory cache
+let cachedVersion = null;
+let cachedConfigs = {
+  routes: null,
+  redirects: null,
+  config: null
+};
+
+// Preview URL cache (5 min TTL)
+const previewUrlCache = new Map();
+const PREVIEW_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Import AWS SDK lazily (only in prod environment)
+let kvsClient = null;
+let ssmClient = null;
+
+/**
+ * Initialize KeyValueStore client
+ */
+function getKVSClient() {
+  if (!kvsClient && KVS_ARN) {
+    const { CloudFrontKeyValueStoreClient } = require('@aws-sdk/client-cloudfront-keyvaluestore');
+    kvsClient = new CloudFrontKeyValueStoreClient({ region: 'us-east-1' });
+  }
+  return kvsClient;
+}
+
+/**
+ * Initialize SSM client
+ */
+function getSSMClient() {
+  if (!ssmClient) {
+    const { SSMClient } = require('@aws-sdk/client-ssm');
+    ssmClient = new SSMClient({ region: 'us-east-1' });
+  }
+  return ssmClient;
+}
+
+/**
+ * Get current config version from KeyValueStore
+ */
+async function getCurrentVersion() {
+  const client = getKVSClient();
+  if (!client || !KVS_ARN) {
+    return null;
+  }
+
+  try {
+    const { GetKeyCommand } = require('@aws-sdk/client-cloudfront-keyvaluestore');
+    const result = await client.send(
+      new GetKeyCommand({
+        KvsARN: KVS_ARN,
+        Key: `${ENVIRONMENT}_version`
+      })
+    );
+    return result.Value;
+  } catch (error) {
+    if (error.name !== 'ResourceNotFoundException') {
+      console.error('Error getting config version from KVS:', error);
+    }
+    return null;
+  }
+}
 
 /**
  * Fetch config from S3 CDN
  */
-async function fetchConfig(name) {
+async function fetchConfig(name, version) {
   const https = require('https');
-  const url = `${CONFIG_CDN_URL}/${ENVIRONMENT}/www/${name}.json`;
+  // When using versioned configs, path is: /{env}/{version}/{name}.json
+  // When using legacy configs, path is: /{env}/www/{name}.json
+  const path = version
+    ? `/${ENVIRONMENT}/${version}/${name}.json`
+    : `/${ENVIRONMENT}/www/${name}.json`;
+  const url = `${CONFIG_CDN_URL}${path}`;
 
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        return;
+      }
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -41,44 +118,52 @@ async function fetchConfig(name) {
 }
 
 /**
- * Load all configs (with caching)
+ * Load all configs (with version-based caching)
  */
 async function loadConfigs() {
-  const now = Date.now();
-  if (routesCache && configCache && (now - lastFetchTime) < CACHE_TTL_MS) {
+  // Check current version in KeyValueStore
+  const currentVersion = await getCurrentVersion();
+
+  // If version matches cached version, use cache
+  if (currentVersion && currentVersion === cachedVersion && cachedConfigs.routes) {
     return;
+  }
+
+  // Version changed or first load - fetch new configs
+  if (currentVersion && currentVersion !== cachedVersion) {
+    console.log(`Config version changed: ${cachedVersion} -> ${currentVersion}`);
   }
 
   try {
     // If no CDN URL, use embedded fallback config
     if (!CONFIG_CDN_URL) {
-      routesCache = getDefaultRoutes();
-      redirectsCache = [];
-      configCache = { origins: {} };
-      lastFetchTime = now;
+      cachedConfigs.routes = getDefaultRoutes();
+      cachedConfigs.redirects = [];
+      cachedConfigs.config = { origins: {} };
+      cachedVersion = 'default';
       return;
     }
 
     const [routes, redirects, config] = await Promise.all([
-      fetchConfig('routes'),
-      fetchConfig('redirects').catch(() => []),
-      fetchConfig('config')
+      fetchConfig('routes', currentVersion),
+      fetchConfig('redirects', currentVersion).catch(() => []),
+      fetchConfig('config', currentVersion).catch(() => ({ origins: {} }))
     ]);
 
-    routesCache = routes;
-    redirectsCache = redirects;
-    configCache = config;
-    lastFetchTime = now;
+    cachedConfigs.routes = routes;
+    cachedConfigs.redirects = redirects;
+    cachedConfigs.config = config;
+    cachedVersion = currentVersion || 'legacy';
 
     // Sort routes by path length (longest first) for proper matching
-    routesCache.sort((a, b) => b.path.length - a.path.length);
+    cachedConfigs.routes.sort((a, b) => b.path.length - a.path.length);
   } catch (error) {
     console.error('Error loading configs:', error);
     // Fall back to defaults if fetch fails
-    if (!routesCache) {
-      routesCache = getDefaultRoutes();
-      redirectsCache = [];
-      configCache = { origins: {} };
+    if (!cachedConfigs.routes) {
+      cachedConfigs.routes = getDefaultRoutes();
+      cachedConfigs.redirects = [];
+      cachedConfigs.config = { origins: {} };
     }
   }
 }
@@ -111,7 +196,7 @@ function getDefaultRoutes() {
  * Find matching app for URI
  */
 function findMatchingApp(uri) {
-  for (const route of routesCache) {
+  for (const route of cachedConfigs.routes) {
     // Handle exact matches
     if (route.exact && uri === route.path) {
       return route.app;
@@ -132,11 +217,11 @@ function findMatchingApp(uri) {
  * Find matching redirect
  */
 function findRedirect(uri, querystring) {
-  if (!redirectsCache || redirectsCache.length === 0) {
+  if (!cachedConfigs.redirects || cachedConfigs.redirects.length === 0) {
     return null;
   }
 
-  for (const redirect of redirectsCache) {
+  for (const redirect of cachedConfigs.redirects) {
     const sourcePath = redirect.sourcePath.replace(/\/$/, ''); // Remove trailing slash
     const uriNormalized = uri.replace(/\/$/, '');
 
@@ -213,15 +298,115 @@ function normalizeTrailingSlash(uri) {
 }
 
 /**
+ * Generate branch ID from branch name (SHA256 hash, first 12 chars)
+ */
+function generateBranchId(branchName) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(branchName).digest('hex').substring(0, 12);
+}
+
+/**
+ * Extract branch name from preview subdomain
+ * Pattern: {branch}.www.domain-beta.com (4+ parts)
+ */
+function extractBranchName(host) {
+  if (!BETA_DOMAIN || !host) return null;
+
+  const parts = host.split('.');
+  // Pattern: {branch}.www.domain-beta.com
+  // e.g., feature-login.www.domain-beta.com
+  if (parts.length >= 4 && parts[0] !== 'www' && parts[1] === 'www') {
+    return parts[0];
+  }
+  return null;
+}
+
+/**
+ * Fetch preview App Runner URL from SSM
+ */
+async function fetchPreviewUrl(branchName, app) {
+  const branchId = generateBranchId(branchName);
+  const cacheKey = `${branchId}/${app}`;
+  const now = Date.now();
+
+  // Check cache
+  const cached = previewUrlCache.get(cacheKey);
+  if (cached && (now - cached.timestamp) < PREVIEW_CACHE_TTL_MS) {
+    return cached.url;
+  }
+
+  // Fetch from SSM
+  const client = getSSMClient();
+  const paramName = `/${PROJECT_PREFIX}/preview/${branchId}/${app}`;
+
+  try {
+    const { GetParameterCommand } = require('@aws-sdk/client-ssm');
+    const result = await client.send(new GetParameterCommand({ Name: paramName }));
+    const url = result.Parameter?.Value;
+    if (url) {
+      previewUrlCache.set(cacheKey, { url, timestamp: now });
+      return url;
+    }
+  } catch (e) {
+    if (e.name !== 'ParameterNotFound') {
+      console.error(`SSM error for ${paramName}:`, e.message);
+    }
+  }
+  return null;
+}
+
+/**
  * Main handler
  */
 exports.handler = async (event) => {
   const request = event.Records[0].cf.request;
   const uri = request.uri;
   const querystring = request.querystring || '';
+  const host = request.headers.host?.[0]?.value || '';
 
   // Load configs
   await loadConfigs();
+
+  // Step 0: Check for preview branch subdomain
+  const branchName = extractBranchName(host);
+  if (branchName) {
+    // Preview request: {branch}.www.domain-beta.com
+    const app = findMatchingApp(uri);
+    const previewUrl = await fetchPreviewUrl(branchName, app);
+
+    if (!previewUrl) {
+      return {
+        status: '404',
+        statusDescription: 'Not Found',
+        body: `Preview not found for branch: ${branchName}`,
+        headers: {
+          'content-type': [{
+            key: 'Content-Type',
+            value: 'text/plain'
+          }]
+        }
+      };
+    }
+
+    // Route to preview App Runner
+    const domain = previewUrl.replace(/^https?:\/\//, '');
+    request.origin = {
+      custom: {
+        domainName: domain,
+        port: 443,
+        protocol: 'https',
+        path: '',
+        sslProtocols: ['TLSv1.2'],
+        readTimeout: 30,
+        keepaliveTimeout: 5
+      }
+    };
+    request.headers.host = [{ key: 'Host', value: domain }];
+    request.headers['x-preview-branch'] = [{ key: 'X-Preview-Branch', value: branchName }];
+    request.headers['x-routed-app'] = [{ key: 'X-Routed-App', value: app }];
+
+    return request;
+  }
 
   // Step 1: Normalize trailing slashes
   const normalizedUri = normalizeTrailingSlash(uri);
@@ -265,7 +450,7 @@ exports.handler = async (event) => {
   const app = findMatchingApp(uri);
 
   // Get App Runner URL from config
-  const originConfig = configCache.origins && configCache.origins[app];
+  const originConfig = cachedConfigs.config.origins && cachedConfigs.config.origins[app];
   if (originConfig && originConfig.appRunnerUrl) {
     request.origin = {
       custom: {

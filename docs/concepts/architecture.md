@@ -188,8 +188,8 @@ We run three environments:
 | Environment | Branch | URL | Purpose |
 |-------------|--------|-----|---------|
 | Production | `main` | `www.domain.com` | Live user traffic |
-| Beta | `beta` | `beta.domain.com` | Pre-release testing |
-| Preview | Feature branches | `*.awsapprunner.com` | PR review |
+| Beta | `beta` | `www.domain-beta.com` | Pre-release testing |
+| Preview | Feature branches | `{branch}.www.domain-beta.com` | PR review |
 
 ### Preview Environments
 
