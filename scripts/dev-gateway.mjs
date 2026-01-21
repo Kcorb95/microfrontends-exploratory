@@ -7,18 +7,14 @@
  */
 
 import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import httpProxy from 'http-proxy';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GATEWAY_PORT = 3000;
-
-// Use local config, fallback to development for backwards compatibility
-const LOCAL_CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/local/www');
-const DEV_CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/development/www');
-const CONFIG_PATH = existsSync(LOCAL_CONFIG_PATH) ? LOCAL_CONFIG_PATH : DEV_CONFIG_PATH;
+const CONFIG_PATH = join(__dirname, '../packages/pathfinder/configs/local/www');
 
 function loadConfig(filename) {
   const filepath = join(CONFIG_PATH, filename);
@@ -184,14 +180,13 @@ const displayRoutes = routes
     return `  ${path.padEnd(25)} -> ${r.app} (:${port})`;
   });
 
-const configEnv = CONFIG_PATH.includes('/local/') ? 'local' : 'development';
 server.listen(GATEWAY_PORT, () => {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐
 │                   DEV GATEWAY STARTED                       │
 ├─────────────────────────────────────────────────────────────┤
 │  URL: http://localhost:${GATEWAY_PORT}                               │
-│  Config: packages/pathfinder/configs/${configEnv}/www/       │
+│  Config: packages/pathfinder/configs/local/www/             │
 ├─────────────────────────────────────────────────────────────┤
 │  Routes:                                                    │
 ${displayRoutes.map((r) => `│${r.padEnd(61)}│`).join('\n')}
