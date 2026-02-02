@@ -26,7 +26,7 @@ for (const [name, schema] of Object.entries(schemas)) {
 
 // Get environment filter from command line args
 const envFilter = process.argv[2];
-const environments = envFilter ? [envFilter] : ['production', 'beta', 'preview'];
+const environments = envFilter ? [envFilter] : ['production', 'beta'];
 const distributions = ['www'];
 
 let hasErrors = false;

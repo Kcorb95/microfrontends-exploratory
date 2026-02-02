@@ -1,6 +1,5 @@
 [
   { "path": "/", "app": "core", "exact": true },
-  { "path": "/home*", "app": "core" },
   { "path": "/pricing*", "app": "core" },
   { "path": "/downloads*", "app": "core" },
   { "path": "/dev*", "app": "core" },

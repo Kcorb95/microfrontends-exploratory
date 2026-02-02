@@ -6,7 +6,8 @@
   "scripts": {
     "validate": "node scripts/validate.js",
     "validate:production": "node scripts/validate.js production",
-    "validate:beta": "node scripts/validate.js beta"
+    "validate:beta": "node scripts/validate.js beta",
+    "prepare-deploy": "node scripts/prepare-deploy.js"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

@@ -49,6 +49,12 @@ variable "cloudfront_distribution_arns" {
   default     = []
 }
 
+variable "kvs_arn" {
+  description = "CloudFront KeyValueStore ARN for edge config version updates"
+  type        = string
+  default     = null
+}
+
 variable "create_terraform_role" {
   description = "Create IAM role for Terraform operations"
   type        = bool

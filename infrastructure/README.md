@@ -19,7 +19,7 @@ infrastructure/
 │   ├── app-runner/            # All 7 App Runner services
 │   ├── www-distribution/      # www CloudFront + Lambda@Edge routing
 │   ├── docs-distribution/     # docs CloudFront distribution
-│   ├── voyager/               # S3 + CloudFront SPA
+│   ├── voyager/               # S3 + CloudFront for media assets (images, videos, PDFs)
 │   └── turbo-cache/           # Turborepo remote cache
 │
 └── environments/              # Environment-specific tfvars

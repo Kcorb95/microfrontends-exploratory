@@ -7,8 +7,8 @@ Deploy your changes to production, beta, or preview environments.
 | Environment | Branch | URL | Purpose |
 |-------------|--------|-----|---------|
 | **Production** | `main` | `www.domain.com` | Live traffic |
-| **Beta** | `beta` | `beta.domain.com` | Pre-release testing |
-| **Preview** | Any other branch | `*.awsapprunner.com` | PR review |
+| **Beta** | `beta` | `www.domain-beta.com` | Pre-release testing |
+| **Preview** | Any other branch | `{branch}.www.domain-beta.com` | PR review |
 
 ## Automatic Deployments
 
@@ -143,9 +143,11 @@ gh workflow run deploy-production.yml -f apps="affected"
 
 ### How Preview URLs Work
 
-1. Branch name is hashed to create a unique ID
-2. App Runner services created with that ID
-3. URLs are posted to PR: `https://micro-frontends-poc-core-preview-abc123.us-east-1.awsapprunner.com`
+1. Branch name is sanitized (lowercase, special chars converted to dashes)
+2. A unique ID is generated from the branch name hash (for AWS resource naming)
+3. App Runner services are created with that ID
+4. Preview is accessible via custom domain: `https://{branch-name}.www.domain-beta.com`
+5. Direct App Runner URLs are also available in PR comments for debugging
 
 ### Preview Cleanup
 
@@ -180,9 +182,16 @@ If it times out (10 minutes), re-run the workflow.
 
 ### Branch Naming
 
-Keep branch names short for preview environments:
-- Good: `feat/add-login`, `fix/nav-bug`
-- Bad: `feature/implement-user-authentication-with-oauth2-and-refresh-tokens`
+Branch names are automatically sanitized for preview URLs:
+- Uppercase letters → lowercase
+- Slashes and special characters → dashes
+- Multiple dashes → single dash
+
+**Examples:**
+- `feat/add-login` → `feat-add-login.www.domain-beta.com`
+- `feature/OAuth2-Login` → `feature-oauth2-login.www.domain-beta.com`
+
+Branch names can be any length. AWS resource names use a 12-character hash of the branch name.
 
 ### Coordinating Large Changes
 
