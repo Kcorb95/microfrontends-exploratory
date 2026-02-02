@@ -5,17 +5,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.join(__dirname, '..');
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 
 const schemas = {
-  'routes.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/routes.schema.json'), 'utf-8')),
-  'redirects.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/redirects.schema.json'), 'utf-8')),
-  'config.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/config.schema.json'), 'utf-8')),
-  'csp-domains.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/csp-domains.schema.json'), 'utf-8')),
-  'cors-config.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/cors-config.schema.json'), 'utf-8')),
-  'cache-rules.json': JSON.parse(fs.readFileSync(path.join(__dirname, '../schemas/cache-rules.schema.json'), 'utf-8')),
+  'routes.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/routes.schema.json'), 'utf-8')),
+  'redirects.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/redirects.schema.json'), 'utf-8')),
+  'config.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/config.schema.json'), 'utf-8')),
+  'csp-domains.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/csp-domains.schema.json'), 'utf-8')),
+  'cors-config.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/cors-config.schema.json'), 'utf-8')),
+  'cache-rules.json': JSON.parse(fs.readFileSync(path.join(rootDir, 'schemas/cache-rules.schema.json'), 'utf-8')),
 };
 
 const validators = {};
@@ -23,14 +24,16 @@ for (const [name, schema] of Object.entries(schemas)) {
   validators[name] = ajv.compile(schema);
 }
 
-const environments = ['production', 'preview'];
+// Get environment filter from command line args
+const envFilter = process.argv[2];
+const environments = envFilter ? [envFilter] : ['production', 'beta'];
 const distributions = ['www'];
 
 let hasErrors = false;
 
 for (const env of environments) {
   for (const dist of distributions) {
-    const configDir = path.join(__dirname, `../configs/${env}/${dist}`);
+    const configDir = path.join(rootDir, env, dist);
 
     if (!fs.existsSync(configDir)) {
       console.log(`Skipping ${env}/${dist} (directory not found)`);

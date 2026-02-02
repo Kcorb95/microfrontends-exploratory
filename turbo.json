@@ -31,18 +31,24 @@
       "persistent": true
     },
     "lint": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "**/*.{js,jsx}"],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "**/*.{js,jsx,ts,tsx}", "eslint.config.js"],
       "outputs": []
     },
     "lint:fix": {
-      "dependsOn": ["^build"],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "**/*.{js,jsx,ts,tsx}", "eslint.config.js"],
       "cache": false
     },
     "test": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "**/*.test.{js,jsx}"],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "**/*.{js,jsx,ts,tsx}", "**/*.test.{js,jsx,ts,tsx}"],
       "outputs": ["coverage/**"]
+    },
+    "type-check": {
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "**/*.{ts,tsx,js,jsx}", "tsconfig.json"],
+      "outputs": []
     },
     "clean": {
       "cache": false

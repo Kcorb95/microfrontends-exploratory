@@ -17,9 +17,12 @@
  *   # Outputs: abc123def456 (the version hash)
  */
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Config files to include in deployment
 const CONFIG_FILES = [
@@ -41,7 +44,7 @@ function main() {
     process.exit(1);
   }
 
-  const configDir = path.join(__dirname, '..', 'configs', env, 'www');
+  const configDir = path.join(__dirname, '..', env, 'www');
 
   if (!fs.existsSync(configDir)) {
     console.error(`Config directory not found: ${configDir}`);

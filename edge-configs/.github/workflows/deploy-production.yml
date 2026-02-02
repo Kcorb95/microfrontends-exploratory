@@ -1,14 +1,13 @@
-name: Deploy Pathfinder (Production)
+name: Deploy Production Configs
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
-      - 'packages/pathfinder/configs/production/**'
+      - 'production/**'
 
 concurrency:
-  group: deploy-pathfinder-production
+  group: deploy-production-configs
   cancel-in-progress: false
 
 env:
@@ -25,45 +24,29 @@ jobs:
     name: Validate Configs
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install --filter @repo/pathfinder
-
-      - name: Validate configs
-        run: |
-          cd packages/pathfinder
-          pnpm run validate
+      - run: npm install
+      - run: npm run validate:production
 
   deploy:
     name: Deploy to Production
-    runs-on: ubuntu-latest
     needs: validate
+    runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Prepare configs for deploy
         id: prepare
         run: |
-          VERSION=$(node packages/pathfinder/scripts/prepare-deploy.js ${{ env.ENVIRONMENT }} /tmp/edge-configs)
+          VERSION=$(node scripts/prepare-deploy.js ${{ env.ENVIRONMENT }} /tmp/edge-configs)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Prepared configs with version: $VERSION"
 
@@ -112,7 +95,7 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## Pathfinder Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "## Edge Configs Production Deployment" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -121,8 +104,3 @@ jobs:
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| S3 Bucket | \`${{ vars.EDGE_CONFIGS_BUCKET }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| KVS ARN | \`${{ vars.KVS_ARN }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployed Configs" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ls -la /tmp/edge-configs/${{ env.ENVIRONMENT }}/${{ steps.prepare.outputs.version }}/ >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

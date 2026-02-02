@@ -1,0 +1,16 @@
+{
+  "name": "edge-configs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate.js",
+    "validate:production": "node scripts/validate.js production",
+    "validate:beta": "node scripts/validate.js beta",
+    "prepare-deploy": "node scripts/prepare-deploy.js"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}
