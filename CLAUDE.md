@@ -53,7 +53,7 @@ packages/                # Shared packages (@repo/*)
   ├── config/            # ESLint, Tailwind, Prettier, JSConfig
   ├── analytics/         # Analytics tracking
   ├── cache/             # Redis ISR cache handler
-  ├── pathfinder/        # Edge routing configs
+  ├── pathfinder/        # Lambda@Edge routing logic
   ├── contentful/        # Contentful CMS integration
   ├── prismic/           # Prismic CMS integration
   └── search/            # Algolia search
@@ -82,7 +82,7 @@ scripts/dev-gateway.mjs  # Local reverse proxy
 1. Copy existing app from `apps/`
 2. Update `package.json` name to `@apps/{name}` and dev port
 3. Set `assetPrefix: '/_mk-www-{name}'` in next.config.js for production
-4. Add route in `packages/pathfinder/configs/{env}/www/routes.json`
+4. Add route in `edge-configs` repo: `{env}/www/routes.json`
 5. Add to `ALL_APPS` array in `.github/workflows/deploy-*.yml`
 6. Add ECR repo in `infrastructure/stacks/shared/ecr.tf`
 7. Add App Runner service in `infrastructure/stacks/app-runner/apps.tf`
@@ -94,19 +94,16 @@ mkdir -p packages/{name}/src
 # Add eslint.config.js extending @repo/config/eslint/{library|react}
 ```
 
-## Pathfinder Edge Configs
+## Edge Configs (Separate Repository)
 
-Location: `packages/pathfinder/configs/{environment}/www/`
+Edge routing, redirects, and CSP configs are managed in the `edge-configs` repository for independent deployment.
 
-- `routes.json` - Path to app mapping (order matters, specific before catch-all)
-- `redirects.json` - URL redirects
-- `config.json` - App Runner origins
-- `csp-domains.json` - CSP whitelist
-- `cache-rules.json` - Cache-Control rules
+**Why separate?**
+- Non-technical users can manage routing without touching app code
+- Config changes deploy in seconds (no app builds required)
+- Completely independent from app deployment cycles
 
-Validate locally: `cd packages/pathfinder && pnpm run validate`
-
-Auto-deploys on git push (main → production, beta → beta).
+**The `@repo/pathfinder` package** in this monorepo contains only the Lambda@Edge routing logic, not the config files.
 
 ## Deployment
 
@@ -117,6 +114,34 @@ Auto-deploys on git push (main → production, beta → beta).
 | Feature branches | Preview | Ephemeral App Runner services, auto-cleanup |
 
 Preview uses branch ID (12-char SHA256 hash) for AWS resource names - branch names can be any length.
+
+## Release Workflow
+
+### App Deployment Flow
+
+```
+Feature Branch → Preview (test & approve) → Beta → Main (production)
+```
+
+1. **Feature branches** create ephemeral preview environments
+2. **Approval happens at preview stage** - test thoroughly before merging to beta
+3. **Beta** contains only approved, production-ready code
+4. **Merging beta→main** auto-deploys all affected apps
+
+### Independent Deployments
+
+- Apps deploy independently based on what changed
+- You don't wait for other apps - merge YOUR approved work to beta
+- Infra changes deploy separately via manual workflow
+
+### Edge Configs (Separate Repo)
+
+Routing, redirects, and CSP configs live in a separate `edge-configs` repo:
+- Non-technical users can manage without touching app code
+- Changes deploy in seconds (no app builds)
+- Completely independent from app deployment cycles
+
+See [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) for detailed workflow documentation.
 
 ## Environment Variables
 
