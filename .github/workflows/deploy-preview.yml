@@ -415,6 +415,10 @@ jobs:
             **Branch:** `${{ needs.prepare.outputs.branch_original }}`
             **Commit:** `${{ github.sha }}`
 
+            ### Preview URL
+
+            ${{ needs.deploy.result == 'success' && format('**[https://{0}.www.domain-beta.com](https://{0}.www.domain-beta.com)**', needs.prepare.outputs.branch_name) || 'Not available' }}
+
             ### Deployed Apps
             ${{ needs.prepare.outputs.has_changes == 'false' && 'No apps were affected by this change.' || '' }}
 
@@ -429,6 +433,7 @@ jobs:
 
             ---
             > These preview environments are ephemeral and will be automatically cleaned up when the branch is deleted.
+            > Access via custom domain: `{branch-name}.www.domain-beta.com`
 
             *Last updated: ${{ github.event.pull_request.updated_at || 'N/A' }}*
 

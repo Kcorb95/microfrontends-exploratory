@@ -33,3 +33,27 @@ variable "web_acl_id" {
   type        = string
   default     = null
 }
+
+variable "kvs_arn" {
+  description = "CloudFront KeyValueStore ARN for edge config versions"
+  type        = string
+  default     = null
+}
+
+variable "edge_configs_bucket_arn" {
+  description = "S3 bucket ARN for edge configs"
+  type        = string
+  default     = null
+}
+
+variable "beta_domain" {
+  description = "Beta domain name (e.g., domain-beta.com) for preview branches"
+  type        = string
+  default     = null
+}
+
+variable "production_hosted_zone" {
+  description = "Route53 hosted zone for production domain (defaults to domain extracted from www_domain)"
+  type        = string
+  default     = null
+}

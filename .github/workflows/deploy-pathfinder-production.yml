@@ -55,27 +55,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Prepare configs for deploy
+        id: prepare
+        run: |
+          VERSION=$(node packages/pathfinder/scripts/prepare-deploy.js ${{ env.ENVIRONMENT }} /tmp/edge-configs)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Prepared configs with version: $VERSION"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync configs to S3
+      - name: Upload configs to S3
         run: |
-          echo "Deploying production configs..."
-          aws s3 sync \
-            packages/pathfinder/configs/production \
-            s3://${{ vars.EDGE_CONFIGS_BUCKET }}/production \
-            --delete
+          echo "Uploading configs version ${{ steps.prepare.outputs.version }}..."
+          aws s3 sync /tmp/edge-configs/${{ env.ENVIRONMENT }}/${{ steps.prepare.outputs.version }} \
+            s3://${{ vars.EDGE_CONFIGS_BUCKET }}/${{ env.ENVIRONMENT }}/${{ steps.prepare.outputs.version }}/ \
+            --cache-control "public, max-age=31536000, immutable"
 
-      - name: Invalidate CloudFront cache
+      - name: Update version in KeyValueStore
+        run: |
+          echo "Updating version pointer in KeyValueStore..."
+
+          # Get current ETag for conditional update
+          ETAG=$(aws cloudfront-keyvaluestore describe-key-value-store \
+            --kvs-arn ${{ vars.KVS_ARN }} \
+            --query 'ETag' \
+            --output text)
+
+          # Update version pointer
+          aws cloudfront-keyvaluestore put-key \
+            --kvs-arn ${{ vars.KVS_ARN }} \
+            --key "${{ env.ENVIRONMENT }}_version" \
+            --value "${{ steps.prepare.outputs.version }}" \
+            --if-match "$ETAG"
+
+          echo "Version updated to: ${{ steps.prepare.outputs.version }}"
+
+      - name: Invalidate CloudFront cache (optional)
         run: |
           if [ -n "${{ vars.WWW_DISTRIBUTION_ID }}" ]; then
             echo "Invalidating CloudFront cache..."
             aws cloudfront create-invalidation \
               --distribution-id ${{ vars.WWW_DISTRIBUTION_ID }} \
-              --paths "/production/*"
+              --paths "/*"
           else
             echo "WWW_DISTRIBUTION_ID not configured, skipping invalidation"
           fi
@@ -87,10 +117,12 @@ jobs:
           echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Environment | \`production\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.prepare.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| S3 Bucket | \`${{ vars.EDGE_CONFIGS_BUCKET }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| KVS ARN | \`${{ vars.KVS_ARN }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployed Configs" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ls -la packages/pathfinder/configs/production/www/ >> $GITHUB_STEP_SUMMARY
+          ls -la /tmp/edge-configs/${{ env.ENVIRONMENT }}/${{ steps.prepare.outputs.version }}/ >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

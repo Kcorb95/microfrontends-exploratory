@@ -160,6 +160,90 @@ resource "aws_iam_role_policy" "cloudfront" {
   })
 }
 
+# SSM Parameter Policy for Preview Environments
+# Allows GitHub Actions to read/write preview branch URLs
+resource "aws_iam_role_policy" "ssm_preview" {
+  name = "ssm-preview-access"
+  role = aws_iam_role.deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SSMPreviewWrite"
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:DeleteParameter",
+          "ssm:GetParameter",
+          "ssm:GetParametersByPath"
+        ]
+        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/preview/*"
+      }
+    ]
+  })
+}
+
+# CloudFront KeyValueStore Policy for Pathfinder Config Deployments
+resource "aws_iam_role_policy" "kvs" {
+  count = var.kvs_arn != null ? 1 : 0
+  name  = "kvs-access"
+  role  = aws_iam_role.deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "KVSUpdate"
+        Effect = "Allow"
+        Action = [
+          "cloudfront-keyvaluestore:GetKey",
+          "cloudfront-keyvaluestore:PutKey",
+          "cloudfront-keyvaluestore:DescribeKeyValueStore"
+        ]
+        Resource = var.kvs_arn
+      }
+    ]
+  })
+}
+
+# App Runner Create/Delete Policy for Preview Environments
+resource "aws_iam_role_policy" "app_runner_preview" {
+  name = "app-runner-preview"
+  role = aws_iam_role.deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AppRunnerPreviewCreate"
+        Effect = "Allow"
+        Action = [
+          "apprunner:CreateService",
+          "apprunner:DeleteService",
+          "apprunner:TagResource",
+          "apprunner:UntagResource",
+          "apprunner:ListTagsForResource"
+        ]
+        Resource = "arn:aws:apprunner:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:service/${var.project}-*-preview-*"
+      },
+      {
+        Sid    = "PassRole"
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-*"
+        ]
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "apprunner.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
